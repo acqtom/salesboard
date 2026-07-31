@@ -1,17 +1,24 @@
 # Sales Board
 
-A single-file sales & commissions dashboard: a Post Call Form for logging calls, a
+A sales & commissions dashboard: a Post Call Form for logging calls, a
 live-recomputing performance dashboard, commission tracking, and a raw data view —
-all in one static `index.html` with no build step and no backend.
-
-## Live site
-
-https://acqtom.github.io/salesboard/
+a static `index.html` frontend (no build step) backed by a couple of Vercel
+serverless functions and Upstash Redis for storage.
 
 ## Running locally
 
-Open `index.html` directly in a browser. That's it — no install, no server, no
-dependencies.
+The frontend is still just `index.html`, but data now goes through `/api`, so it
+needs to run behind Vercel to work end to end:
+
+```
+npm install -g vercel   # if you don't have it
+vercel dev
+```
+
+`vercel dev` serves `index.html` and the `/api` functions together and picks up the
+Upstash env vars from the linked Vercel project (`vercel link` first if needed).
+Opening `index.html` directly as a `file://` URL will load the page but the
+form/dashboard won't be able to reach `/api`.
 
 ## Logging in
 
@@ -25,28 +32,36 @@ Two accounts are available:
 Each account gets its own dashboard: deals logged under one never appear under the
 other.
 
-## How data actually works (read this before relying on it)
+## How data actually works
 
-- There is no backend and no database. Everything is one static HTML file.
-- Each account's data (logged calls, closer/setter picklists) is saved to the
-  browser's `localStorage`, namespaced per account.
-- **Data does not sync across devices or browsers.** Logging in as "Alex" on a
-  different computer, a different browser, or in a private/incognito window starts
-  from an empty dashboard — it does not fetch Alex's data from anywhere else.
-- Clearing site data/storage for this page wipes whatever's logged.
-- If you need real multi-device persistence, this needs a real backend (a database
-  + API) behind the Post Call Form and dashboard — the current version is a
-  client-only prototype.
+- Data lives in Upstash Redis, namespaced per account: `deals:<offer>`,
+  `closers:<offer>`, `setters:<offer>`.
+- `index.html` never talks to Redis directly. It calls two serverless functions in
+  `/api`:
+  - `POST /api/session` — validates the offer/password and returns that account's
+    `deals`/`closers`/`setters`. Used on login and by the periodic poll.
+  - `POST /api/save` — validates and writes whichever of
+    `deals`/`closers`/`setters` are included in the request body.
+  - Both live in `api/`, with the Upstash client and the account list factored out
+    into `api/_lib/redis.js` and `api/_lib/auth.js`. The Upstash REST token is only
+    ever read from env vars inside these functions — it's never sent to the browser.
+- **Data now syncs across devices and browsers.** The dashboard re-fetches from
+  `/api/session` every ~8 seconds and whenever the tab regains focus, so changes
+  made on one device show up on others without a manual reload.
+- The account list and passwords are hardcoded in `api/_lib/auth.js` — there's no
+  user-management system, sign-up flow, or per-user secrets beyond that.
 
 ## Security note
 
-The login is **not real authentication** — it's a lightweight client-side gate that
-picks which local dataset to load. There is no server validating the password, and
-the credentials are visible to anyone who views the page source. Don't rely on this
-to keep data private from a technically capable person who has access to the
-deployed page.
+The login is still a lightweight, fixed two-account gate rather than a full auth
+system — but credentials are now checked server-side in `api/_lib/auth.js` on every
+`/api/session` and `/api/save` call, since those endpoints read and write real
+shared data. The browser caches the logged-in offer/password in `localStorage` so a
+page reload doesn't log you out; treat that the same as the original: not a secret
+worth protecting rigorously, just enough to keep one account's data separate from
+the other's.
 
 ## Tech
 
-Plain HTML/CSS/JS. No framework, no build tooling, no dependencies, no npm scripts —
-just open the file.
+Plain HTML/CSS/JS frontend, no framework or build tooling. `/api` is plain Node.js
+Vercel serverless functions using `@upstash/redis` (see `package.json`).

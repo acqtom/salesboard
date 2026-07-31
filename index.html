@@ -519,9 +519,10 @@
   // ---------------------------------------------------------------------
   // 1. DATA MODEL
   // Each record = one booked call. Swapped out per logged-in user (see the
-  // LOGIN section below) and persisted to localStorage, so each login keeps
-  // its own separate set of rows — everything below recomputes from
-  // whatever's currently in this array.
+  // LOGIN section below) and persisted server-side in Upstash via /api, so
+  // each login keeps its own separate set of rows that syncs across
+  // devices — everything below recomputes from whatever's currently in
+  // this array.
   // ---------------------------------------------------------------------
   let deals = [];
 
@@ -910,8 +911,9 @@
     });
   }
 
-  function refreshAll() {
-    saveDeals();
+  // Pure re-render from whatever's currently in `deals`/CLOSERS/SETTERS —
+  // no save, no network. Used after both local edits and server polls.
+  function renderAll() {
     renderCommissionPage();
     renderPerformancePage();
     refreshChartLocalFilters();
@@ -919,6 +921,11 @@
     renderBasePage();
     renderDataFilters();
     renderDataTable();
+  }
+
+  function refreshAll() {
+    saveDeals();
+    renderAll();
   }
 
   // ---------------------------------------------------------------------
@@ -1250,7 +1257,7 @@
   pcfForm.querySelector('[name="closingDate"]').valueAsDate = new Date();
 
   // Closer/Setter picklists — start empty and grow as names are added from the form.
-  // Reloaded/saved per logged-in user, same as `deals`.
+  // Reloaded/saved per logged-in user via /api, same as `deals`.
   let CLOSERS = [];
   let SETTERS = [];
 
@@ -1381,66 +1388,121 @@
   });
 
   // ---------------------------------------------------------------------
-  // 10. LOGIN — a lightweight client-side gate, not real server-side auth
-  //     (there's no server here). Each of the two accounts gets its own
-  //     separate, persisted `deals` array and closer/setter picklist via
-  //     localStorage, so what one account logs never shows up for the other.
+  // 10. LOGIN — still a lightweight gate (two fixed accounts, no user
+  //     management), but credentials are now checked server-side in /api,
+  //     since /api/session and /api/save are real network endpoints that
+  //     read/write each account's live data — the check has to be more
+  //     than decorative once there's real remote data behind it.
+  //     Each account's `deals` array and closer/setter picklist live in
+  //     Upstash, namespaced by account (see api/session.js, api/save.js),
+  //     so they sync across every device logged into that account.
   // ---------------------------------------------------------------------
-  const USERS = [
-    { offer: "Alex", password: "Alex123" },
-    { offer: "Adriel", password: "Adriel123" }
-  ];
   const SESSION_KEY = "salesboard_session_v1";
   let currentUser = null;
+  let currentPassword = null;
+  let pollTimer = null;
+  let pollInFlight = false;
 
-  function storageKey(kind, offer) {
-    return `salesboard_${kind}_${offer.toLowerCase()}`;
+  async function apiCall(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || "Request failed");
+      err.status = res.status;
+      throw err;
+    }
+    return data;
   }
 
-  function loadUserData(offer) {
-    try { deals = JSON.parse(localStorage.getItem(storageKey("deals", offer))) || []; }
-    catch (e) { deals = []; }
-    try { CLOSERS = JSON.parse(localStorage.getItem(storageKey("closers", offer))) || []; }
-    catch (e) { CLOSERS = []; }
-    try { SETTERS = JSON.parse(localStorage.getItem(storageKey("setters", offer))) || []; }
-    catch (e) { SETTERS = []; }
+  // Throws on failure (including bad credentials) — callers decide how to react.
+  async function loadUserData(offer, password) {
+    const data = await apiCall("/api/session", { offer, password });
+    deals = data.deals || [];
+    CLOSERS = data.closers || [];
+    SETTERS = data.setters || [];
   }
 
-  function saveDeals() {
-    if (currentUser) localStorage.setItem(storageKey("deals", currentUser), JSON.stringify(deals));
-  }
-
-  function saveNames() {
+  async function saveDeals() {
     if (!currentUser) return;
-    localStorage.setItem(storageKey("closers", currentUser), JSON.stringify(CLOSERS));
-    localStorage.setItem(storageKey("setters", currentUser), JSON.stringify(SETTERS));
+    try {
+      await apiCall("/api/save", { offer: currentUser, password: currentPassword, deals });
+    } catch (e) {
+      console.error("Failed to save deals to server:", e);
+    }
+  }
+
+  async function saveNames() {
+    if (!currentUser) return;
+    try {
+      await apiCall("/api/save", { offer: currentUser, password: currentPassword, closers: CLOSERS, setters: SETTERS });
+    } catch (e) {
+      console.error("Failed to save names to server:", e);
+    }
   }
 
   function initApp() {
     populateNameSelect(pcfCloserSelect, CLOSERS);
     populateNameSelect(pcfSetterSelect, SETTERS);
-    renderCommissionPage();
-    renderPerformancePage();
-    refreshChartLocalFilters();
     renderKpiGrid();
-    renderFilters();
-    renderBasePage();
-    renderDataFilters();
-    renderDataTable();
+    renderAll();
   }
 
-  function showApp(offer) {
+  // Re-fetches this account's data from the server and re-renders in place —
+  // does NOT save, so it can't clobber a save that's still in flight. Used
+  // for the periodic poll and the window-focus refresh so other devices'
+  // changes show up here without a manual reload.
+  async function pollForUpdates() {
+    if (!currentUser || pollInFlight) return;
+    pollInFlight = true;
+    try {
+      await loadUserData(currentUser, currentPassword);
+      populateNameSelect(pcfCloserSelect, CLOSERS);
+      populateNameSelect(pcfSetterSelect, SETTERS);
+      renderAll();
+    } catch (e) {
+      if (e.status === 401) {
+        // Credentials no longer valid (e.g. account data was reset) — bounce to login.
+        showLogin();
+      } else {
+        console.error("Poll for updates failed:", e);
+      }
+    } finally {
+      pollInFlight = false;
+    }
+  }
+
+  function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(pollForUpdates, 8000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  window.addEventListener("focus", () => { if (currentUser) pollForUpdates(); });
+
+  async function showApp(offer, password) {
     currentUser = offer;
-    loadUserData(offer);
-    localStorage.setItem(SESSION_KEY, offer);
+    currentPassword = password;
+    await loadUserData(offer, password);
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ offer, password }));
     document.getElementById("current-user-label").textContent = offer;
     document.getElementById("view-login").hidden = true;
     document.getElementById("app-shell").hidden = false;
     initApp();
+    startPolling();
   }
 
   function showLogin() {
     currentUser = null;
+    currentPassword = null;
+    stopPolling();
     localStorage.removeItem(SESSION_KEY);
     document.getElementById("app-shell").hidden = true;
     document.getElementById("view-login").hidden = false;
@@ -1449,16 +1511,19 @@
   }
 
   const loginForm = document.getElementById("login-form");
-  loginForm.addEventListener("submit", e => {
+  loginForm.addEventListener("submit", async e => {
     e.preventDefault();
     const offerInput = loginForm.offer.value.trim();
     const passwordInput = loginForm.password.value;
-    const match = USERS.find(u => u.offer.toLowerCase() === offerInput.toLowerCase() && u.password === passwordInput);
-    if (match) {
-      document.getElementById("login-error").hidden = true;
-      showApp(match.offer);
-    } else {
-      document.getElementById("login-error").hidden = false;
+    const loginError = document.getElementById("login-error");
+    try {
+      await showApp(offerInput, passwordInput);
+      loginError.hidden = true;
+    } catch (err) {
+      loginError.textContent = err.status === 401
+        ? "Incorrect offer or password."
+        : "Could not reach the server — try again.";
+      loginError.hidden = false;
     }
   });
 
@@ -1466,13 +1531,19 @@
 
   initChartLocalFilters();
 
-  const savedSession = localStorage.getItem(SESSION_KEY);
-  const savedUser = savedSession && USERS.find(u => u.offer.toLowerCase() === savedSession.toLowerCase());
-  if (savedUser) {
-    showApp(savedUser.offer);
-  } else {
+  (async function autoLogin() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { saved = null; }
+    if (saved && saved.offer && saved.password) {
+      try {
+        await showApp(saved.offer, saved.password);
+        return;
+      } catch (e) {
+        // Saved session no longer valid — fall through to the login screen.
+      }
+    }
     showLogin();
-  }
+  })();
 })();
 </script>
 </body>
