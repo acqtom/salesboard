@@ -295,11 +295,35 @@
   }
   .data-table td { padding: 10px 14px; border-bottom: 1px solid var(--card-border); color: var(--text-secondary); }
   .data-table tr:last-child td { border-bottom: none; }
+  .row-actions { display: flex; gap: 12px; }
   .data-table .row-delete {
     border: none; background: none; color: var(--red); cursor: pointer; font-size: 12px; font-weight: 600; font-family: inherit;
   }
+  .data-table .row-edit {
+    border: none; background: none; color: var(--badge-fg); cursor: pointer; font-size: 12px; font-weight: 600; font-family: inherit;
+  }
   .data-table-empty { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
   .data-table-notes { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* --- edit modal --- */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(15,15,20,0.45);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 40px 20px; overflow-y: auto; z-index: 100;
+  }
+  .modal-overlay[hidden] { display: none; }
+  .modal { width: 100%; }
+  .modal .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .modal-close {
+    border: none; background: none; font-size: 22px; line-height: 1; color: var(--muted);
+    cursor: pointer; padding: 2px 4px; font-family: inherit; flex: none;
+  }
+  .modal-close:hover { color: var(--text-primary); }
+  .btn-secondary {
+    background: none; color: var(--text-secondary); border: 1px solid var(--pill-border); border-radius: 20px;
+    padding: 10px 22px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .btn-secondary:hover { background: var(--surface-1); }
 </style>
 </head>
 <body>
@@ -497,7 +521,7 @@
     <div class="card">
       <div class="card-header">
         <h2>Data</h2>
-        <p>Every logged call behind the dashboard. Delete a row to remove it from every chart and total.</p>
+        <p>Every logged call behind the dashboard. Edit or delete a row and every chart and total updates.</p>
       </div>
       <div class="card-body">
         <div class="filters" id="data-filters"></div>
@@ -510,6 +534,86 @@
 
   </div>
 
+</div>
+
+<!-- ================= EDIT CALL MODAL ================= -->
+<div class="modal-overlay" id="edit-modal-overlay" hidden>
+  <div class="modal card form-card">
+    <div class="card-header">
+      <div>
+        <h2>Edit Call</h2>
+        <p>Update any detail — the dashboard recomputes as soon as you save.</p>
+      </div>
+      <button type="button" class="modal-close" id="edit-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="card-body">
+      <form id="edit-form">
+        <input type="hidden" name="dealId" id="edit-deal-id">
+        <div class="outcome-picker">
+          <span class="outcome-picker-label">Outcome</span>
+          <div class="outcome-buttons" id="edit-outcome-buttons">
+            <button type="button" class="outcome-btn outcome-closed" data-outcome="Closed/Won/Deposit">Closed/Won/Deposit</button>
+            <button type="button" class="outcome-btn outcome-deposit" data-outcome="No Close">No Close</button>
+            <button type="button" class="outcome-btn outcome-dq" data-outcome="Disqualified">Disqualified</button>
+            <button type="button" class="outcome-btn outcome-noshow" data-outcome="No-Show">No-Show</button>
+            <button type="button" class="outcome-btn outcome-cancelled" data-outcome="Cancelled">Cancelled</button>
+            <button type="button" class="outcome-btn outcome-rescheduled" data-outcome="Rescheduled">Rescheduled</button>
+            <button type="button" class="outcome-btn outcome-remainder" data-outcome="Remainder Collection (no call)">Remainder Collection (no call)</button>
+            <button type="button" class="outcome-btn outcome-secondcc" data-outcome="2nd CC Call Booked">2nd CC Call Booked</button>
+          </div>
+          <input type="hidden" name="outcome" id="edit-outcome-value">
+        </div>
+
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Call</span>
+            <input type="text" name="call" required placeholder="e.g. Call 1">
+          </label>
+          <label class="form-field">
+            <span>Date</span>
+            <input type="date" name="closingDate" required>
+          </label>
+          <label class="form-field">
+            <span>Closer</span>
+            <select name="closer" id="edit-closer" required></select>
+          </label>
+          <label class="form-field">
+            <span>Setter</span>
+            <select name="setter" id="edit-setter" required></select>
+          </label>
+          <label class="form-field">
+            <span>Client Full Name</span>
+            <input type="text" name="clientName" required placeholder="e.g. Jamie Smith">
+          </label>
+          <label class="form-field">
+            <span>Client Email</span>
+            <input type="email" name="clientEmail" placeholder="e.g. jamie@email.com">
+          </label>
+          <label class="form-field">
+            <span>Client Phone Number</span>
+            <input type="tel" name="clientPhone" placeholder="e.g. (555) 123-4567">
+          </label>
+          <label class="form-field">
+            <span>Fathom URL</span>
+            <input type="url" name="fathomUrl" placeholder="https://fathom.video/...">
+          </label>
+        </div>
+
+        <div class="form-grid" id="edit-dynamic-fields"></div>
+
+        <label class="form-field form-notes" id="edit-why-wrap">
+          <span id="edit-why-label">Any more call notes</span>
+          <textarea name="callNotes" rows="4" id="edit-why-input" placeholder="Anything else worth logging about this call..."></textarea>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Save Changes</button>
+          <button type="button" class="btn-secondary" id="edit-cancel-btn">Cancel</button>
+          <span class="form-status" id="edit-status"></span>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -889,7 +993,12 @@
           <td class="data-table-notes" title="${(d.callNotes || "").replace(/"/g, "&quot;")}">${d.callNotes || ""}</td>
           <td>${fmtUSD(d.cashCollected)}</td>
           <td>${d.cashType}</td>
-          <td><button class="row-delete" data-id="${d.id}">Delete</button></td>
+          <td>
+            <div class="row-actions">
+              <button class="row-edit" data-id="${d.id}">Edit</button>
+              <button class="row-delete" data-id="${d.id}">Delete</button>
+            </div>
+          </td>
         </tr>
       `).join("");
     table.innerHTML = `
@@ -908,6 +1017,9 @@
         if (idx !== -1) deals.splice(idx, 1);
         refreshAll();
       });
+    });
+    table.querySelectorAll(".row-edit").forEach(btn => {
+      btn.addEventListener("click", () => openEditModal(Number(btn.dataset.id)));
     });
   }
 
@@ -1285,19 +1397,26 @@
     saveNames();
   });
 
-  function applyOutcomeFormConfig(outcome) {
+  // Generic so the edit modal's outcome picker can reuse the same field config
+  // logic against its own dynamic-fields/why-note elements.
+  function applyOutcomeFormConfigTo(outcome, dynamicFieldsEl, whyWrapEl, whyLabelEl) {
     const config = OUTCOME_FORM_CONFIG[outcome] || { fields: [], whyLabel: "Any more call notes" };
-    pcfDynamicFields.innerHTML = config.fields.map(renderPcfField).join("");
+    dynamicFieldsEl.innerHTML = config.fields.map(renderPcfField).join("");
     if (config.whyLabel) {
-      pcfWhyWrap.hidden = false;
-      pcfWhyLabel.textContent = config.whyLabel;
+      whyWrapEl.hidden = false;
+      whyLabelEl.textContent = config.whyLabel;
     } else {
-      pcfWhyWrap.hidden = true;
+      whyWrapEl.hidden = true;
     }
+    return config;
+  }
+
+  function applyOutcomeFormConfig(outcome) {
+    applyOutcomeFormConfigTo(outcome, pcfDynamicFields, pcfWhyWrap, pcfWhyLabel);
   }
 
   function resetOutcomePicker() {
-    document.querySelectorAll(".outcome-btn").forEach(b => b.classList.remove("selected"));
+    document.querySelectorAll("#outcome-buttons .outcome-btn").forEach(b => b.classList.remove("selected"));
     pcfOutcomeValue.value = "";
     pcfFormRest.hidden = true;
     pcfOutcomeError.hidden = true;
@@ -1305,9 +1424,9 @@
     pcfWhyWrap.hidden = false;
   }
 
-  document.querySelectorAll(".outcome-btn").forEach(btn => {
+  document.querySelectorAll("#outcome-buttons .outcome-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".outcome-btn").forEach(b => b.classList.remove("selected"));
+      document.querySelectorAll("#outcome-buttons .outcome-btn").forEach(b => b.classList.remove("selected"));
       btn.classList.add("selected");
       pcfOutcomeValue.value = btn.dataset.outcome;
       pcfOutcomeError.hidden = true;
@@ -1322,21 +1441,15 @@
     return el ? el.value.trim() : "";
   }
 
-  pcfForm.addEventListener("submit", e => {
-    e.preventDefault();
-    const form = e.target;
-    const outcome = pcfOutcomeValue.value;
-    if (!outcome) {
-      pcfOutcomeError.hidden = false;
-      return;
-    }
-
+  // Shared by the post call form (new deal) and the edit modal (existing deal) —
+  // reads every field that both forms have in common off whichever form element
+  // is passed in.
+  function dealFieldsFromForm(form, outcome) {
     const disqualified = outcome === "Disqualified";
     const calendarStatus =
       outcome === "No-Show" ? "no-show" :
       outcome === "Cancelled" ? "cancelled" :
       outcome === "Rescheduled" ? "rescheduled" : "showed";
-    const callOutcome = outcome;
     const cashType =
       outcome === "Closed/Won/Deposit" ? "new" :
       outcome === "No Close" ? "none" :
@@ -1349,8 +1462,7 @@
     const NO_CALL_OUTCOMES = new Set(["Remainder Collection (no call)", "Cancelled", "Rescheduled", "No-Show"]);
     const isCall = NO_CALL_OUTCOMES.has(outcome) ? false : fieldValue(form, "wasCall") !== "no";
 
-    deals.push({
-      id: Date.now(),
+    return {
       call: form.call.value.trim(),
       closer: form.closer.value.trim(),
       setter: form.setter.value.trim(),
@@ -1359,7 +1471,7 @@
       clientPhone: form.clientPhone.value.trim(),
       fathomUrl: form.fathomUrl.value.trim(),
       callNotes: fieldValue(form, "callNotes"),
-      callOutcome,
+      callOutcome: outcome,
       closingDate: form.closingDate.value,
       cashCollected: Number(fieldValue(form, "cashCollected")) || 0,
       revenueGenerated: fieldValue(form, "revenueGenerated") ? Number(fieldValue(form, "revenueGenerated")) : null,
@@ -1369,7 +1481,22 @@
       isCall,
       cashType,
       calendarStatus,
-      disqualified,
+      disqualified
+    };
+  }
+
+  pcfForm.addEventListener("submit", e => {
+    e.preventDefault();
+    const form = e.target;
+    const outcome = pcfOutcomeValue.value;
+    if (!outcome) {
+      pcfOutcomeError.hidden = false;
+      return;
+    }
+
+    deals.push({
+      id: Date.now(),
+      ...dealFieldsFromForm(form, outcome),
       closerCommissionRate: 0.10,
       setterCommissionRate: 0.05
     });
@@ -1382,6 +1509,88 @@
     resetOutcomePicker();
     form.querySelector('[name="closingDate"]').valueAsDate = new Date();
     setTimeout(() => { status.textContent = ""; }, 3000);
+  });
+
+  // ---------------------------------------------------------------------
+  // 9b. EDIT CALL MODAL — same outcome picker + field config as the post
+  //     call form above, pre-filled from the row being edited. Saving
+  //     merges the changes back into that deal in place.
+  // ---------------------------------------------------------------------
+  const editModalOverlay = document.getElementById("edit-modal-overlay");
+  const editForm = document.getElementById("edit-form");
+  const editDealId = document.getElementById("edit-deal-id");
+  const editOutcomeValue = document.getElementById("edit-outcome-value");
+  const editDynamicFields = document.getElementById("edit-dynamic-fields");
+  const editWhyWrap = document.getElementById("edit-why-wrap");
+  const editWhyLabel = document.getElementById("edit-why-label");
+  const editCloserSelect = document.getElementById("edit-closer");
+  const editSetterSelect = document.getElementById("edit-setter");
+
+  function closeEditModal() {
+    editModalOverlay.hidden = true;
+    editForm.reset();
+  }
+
+  function openEditModal(id) {
+    const deal = deals.find(d => d.id === id);
+    if (!deal) return;
+
+    editDealId.value = deal.id;
+    editForm.call.value = deal.call || "";
+    editForm.closingDate.value = deal.closingDate || "";
+    populateNameSelect(editCloserSelect, CLOSERS, deal.closer);
+    populateNameSelect(editSetterSelect, SETTERS, deal.setter);
+    editForm.clientName.value = deal.clientName || "";
+    editForm.clientEmail.value = deal.clientEmail || "";
+    editForm.clientPhone.value = deal.clientPhone || "";
+    editForm.fathomUrl.value = deal.fathomUrl || "";
+
+    document.querySelectorAll("#edit-outcome-buttons .outcome-btn").forEach(b => {
+      b.classList.toggle("selected", b.dataset.outcome === deal.callOutcome);
+    });
+    editOutcomeValue.value = deal.callOutcome;
+    applyOutcomeFormConfigTo(deal.callOutcome, editDynamicFields, editWhyWrap, editWhyLabel);
+
+    // The outcome-specific fields now exist in the DOM — fill in whichever
+    // of them this deal actually has values for.
+    ["paymentMethod", "cashCollected", "revenueGenerated", "dqType", "depositCollected"].forEach(key => {
+      const el = editForm.elements[key];
+      if (el && deal[key] != null) el.value = deal[key];
+    });
+    if (editForm.elements.wasCall) editForm.elements.wasCall.value = deal.isCall === false ? "no" : "yes";
+    editForm.elements.callNotes.value = deal.callNotes || "";
+
+    editModalOverlay.hidden = false;
+  }
+
+  document.querySelectorAll("#edit-outcome-buttons .outcome-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#edit-outcome-buttons .outcome-btn").forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      editOutcomeValue.value = btn.dataset.outcome;
+      applyOutcomeFormConfigTo(btn.dataset.outcome, editDynamicFields, editWhyWrap, editWhyLabel);
+    });
+  });
+
+  document.getElementById("edit-modal-close").addEventListener("click", closeEditModal);
+  document.getElementById("edit-cancel-btn").addEventListener("click", closeEditModal);
+  editModalOverlay.addEventListener("click", e => {
+    if (e.target === editModalOverlay) closeEditModal();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !editModalOverlay.hidden) closeEditModal();
+  });
+
+  editForm.addEventListener("submit", e => {
+    e.preventDefault();
+    const form = e.target;
+    const outcome = editOutcomeValue.value;
+    const idx = deals.findIndex(d => d.id === Number(editDealId.value));
+    if (idx === -1) return;
+
+    deals[idx] = { ...deals[idx], ...dealFieldsFromForm(form, outcome) };
+    refreshAll();
+    closeEditModal();
   });
 
   // ---------------------------------------------------------------------
