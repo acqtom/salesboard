@@ -426,8 +426,8 @@
           <div class="outcome-picker">
             <span class="outcome-picker-label">Outcome</span>
             <div class="outcome-buttons" id="outcome-buttons">
-              <button type="button" class="outcome-btn outcome-closed" data-outcome="Closed Won" data-cash-type="new">Closed/Won</button>
-              <button type="button" class="outcome-btn outcome-deposit" data-outcome="Deposit/Pitched No Close" data-cash-type="deposit">Deposit/Pitched No Close</button>
+              <button type="button" class="outcome-btn outcome-closed" data-outcome="Closed/Won/Deposit" data-cash-type="new">Closed/Won/Deposit</button>
+              <button type="button" class="outcome-btn outcome-deposit" data-outcome="No Close" data-cash-type="none">No Close</button>
               <button type="button" class="outcome-btn outcome-dq" data-outcome="Disqualified">Disqualified</button>
               <button type="button" class="outcome-btn outcome-noshow" data-outcome="No-Show">No-Show</button>
               <button type="button" class="outcome-btn outcome-cancelled" data-outcome="Cancelled">Cancelled</button>
@@ -680,7 +680,7 @@
   function outcomeBucket(d) {
     if (d.disqualified) return "Disqualified";
     if (d.calendarStatus === "no-show") return "No-show";
-    if (d.callOutcome === "Closed Won") return "Closed";
+    if (d.callOutcome === "Closed/Won/Deposit") return "Closed";
     return "Cancelled";
   }
   const OUTCOME_ORDER = ["Closed", "No-show", "Disqualified", "Cancelled"];
@@ -1114,7 +1114,7 @@
     const callsNoShowed = callRows.filter(d => d.calendarStatus === "no-show").length;
     const callsOnCalendar = callRows.length;
     const dqCalls = rows.filter(d => d.disqualified).length;
-    const dealsClosed = rows.filter(d => d.callOutcome === "Closed Won").length;
+    const dealsClosed = rows.filter(d => d.callOutcome === "Closed/Won/Deposit").length;
 
     const closeRate = callsOnCalendar ? (dealsClosed / callsOnCalendar) * 100 : 0;
     const totalShowRate = callsOnCalendar ? (callsShowed / callsOnCalendar) * 100 : 0;
@@ -1171,7 +1171,7 @@
   //    each outcome swaps in its own extra fields + "why" question.
   // ---------------------------------------------------------------------
   const OUTCOME_FORM_CONFIG = {
-    "Closed Won": {
+    "Closed/Won/Deposit": {
       fields: [
         { key: "paymentMethod", type: "select", label: "Payment Method", options: ["Pay in Full", "Financing"] },
         { key: "cashCollected", type: "number", label: "Cash Collected ($)" },
@@ -1179,11 +1179,8 @@
       ],
       whyLabel: "Why did this close?"
     },
-    "Deposit/Pitched No Close": {
-      fields: [
-        { key: "depositCollected", type: "yesno", label: "Deposit collected?" },
-        { key: "cashCollected", type: "number", label: "Cash Collected ($)" }
-      ],
+    "No Close": {
+      fields: [],
       whyLabel: "Why did you not close this?"
     },
     "Disqualified": {
@@ -1339,10 +1336,10 @@
       outcome === "No-Show" ? "no-show" :
       outcome === "Cancelled" ? "cancelled" :
       outcome === "Rescheduled" ? "rescheduled" : "showed";
-    const callOutcome = outcome === "Closed Won" ? "Closed Won" : outcome;
+    const callOutcome = outcome;
     const cashType =
-      outcome === "Closed Won" ? "new" :
-      outcome === "Deposit/Pitched No Close" ? "deposit" :
+      outcome === "Closed/Won/Deposit" ? "new" :
+      outcome === "No Close" ? "none" :
       outcome === "Remainder Collection (no call)" ? "remainder" : "new";
 
     // Cancelled/Rescheduled/No-Show happen before the closing call ever takes place,
